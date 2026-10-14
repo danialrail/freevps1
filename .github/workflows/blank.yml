@@ -1,0 +1,34 @@
+# Start the server.
+          java "${JAVA_FLAGS[@]}" -jar server.jar nogui &
+          SERVER_PID=$!
+
+          # Commit world changes every 10 minutes.
+          # GitHub Actions runners are ephemeral. Remote commits can preserve
+          # snapshots, but do not guarantee recovery of every game operation.
+          while kill -0 "$SERVER_PID" 2>/dev/null; do
+            sleep 600
+
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              break
+            fi
+
+            git add -f world/
+
+            if ! git diff --cached --quiet; then
+              git commit -m "chore: backup Minecraft world [skip ci]" || true
+
+              # Fetch first to reduce the risk of overwriting remote commits.
+              git fetch origin "${GITHUB_REF_NAME}"
+
+              if ! git pull --rebase origin "${GITHUB_REF_NAME}"; then
+                echo "WARNING: Rebase failed. Skipping this backup push."
+                git rebase --abort || true
+                continue
+              fi
+
+              git push origin "HEAD:${GITHUB_REF_NAME}" || \
+                echo "WARNING: World backup push failed."
+            fi
+          done
+
+          wait "$SERVER_PID"
